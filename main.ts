@@ -18,8 +18,8 @@
 //     ridden; either way it stays out while the tape is in free fall
 //     (60-bar change under -1%). One position, sized to the cash on
 //     hand under the weight cap.
-//   - Harvest exit: once the position is worth 0.45% more than its
-//     cost, a trailing line is armed 0.30% under the position's peak
+//   - Harvest exit: once the position is worth 1.8% more than its
+//     cost, a trailing line is armed 0.9% under the position's peak
 //     value; a close back through that line sells the whole position
 //     and banks the move. A run that never fades is never sold early:
 //     the trail only follows the peak up.
@@ -58,9 +58,9 @@ const HARD_STOP = 0.06;
 /** Exit once the close is 3% under the trend line. */
 const BREAK_BAND = 0.03;
 /** The gain over cost that arms the trailing harvest line. */
-const HARVEST_ARM = 0.009;
+const HARVEST_ARM = 0.018;
 /** The trailing harvest line sits this far under the peak value. */
-const HARVEST_TRAIL = 0.005;
+const HARVEST_TRAIL = 0.009;
 /** A harvest re-entry wants a fresh dip this deep under the recent high. */
 const REENTRY_DIP = 0.002;
 /** Bars to sit out after a harvest exit. */
