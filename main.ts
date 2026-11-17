@@ -18,8 +18,8 @@
 //     ridden; either way it stays out while the tape is in free fall
 //     (60-bar change under -1%). One position, sized to the cash on
 //     hand under the weight cap.
-//   - Harvest exit: once the position is worth 1.8% more than its
-//     cost, a trailing line is armed 0.9% under the position's peak
+//   - Harvest exits, in two tiers: at +0.9% a 40% slice is banked;
+//     the rest rides until, past a +1.8% peak, it falls 0.9% under it,
 //     value; a close back through that line sells the whole position
 //     and banks the move. A run that never fades is never sold early:
 //     the trail only follows the peak up.
@@ -61,6 +61,8 @@ const BREAK_BAND = 0.03;
 const HARVEST_ARM = 0.018;
 /** The trailing harvest line sits this far under the peak value. */
 const HARVEST_TRAIL = 0.009;
+/** First harvest tier: at this gain, a slice of the position is banked. */
+const TIER1_ARM = 0.009;
 /** A harvest re-entry wants a fresh dip this deep under the recent high. */
 const REENTRY_DIP = 0.002;
 /** Bars to sit out after a harvest exit. */
@@ -89,6 +91,8 @@ interface Track {
   pendingCooldown: number;
   /** The best value-to-cost ratio of the current position so far. */
   peakRatio: number;
+  /** Whether the first harvest tier already banked its slice. */
+  tier1Done: boolean;
   /** Whether the last exit was a harvest (quick re-entry) or not. */
   lastExitHarvest: boolean;
   /** Whether the last batch held a position in this symbol. */
@@ -102,7 +106,7 @@ const tracks = new Map<string, Track>();
 function track(symbol: string): Track {
   let t = tracks.get(symbol);
   if (t === undefined) {
-    t = { closes: [], seed: [], ema: null, firstClose: null, bars: 0, cooldown: 0, pendingCooldown: COOLDOWN_BARS, peakRatio: 0, lastExitHarvest: false, wasHeld: false, heldBefore: false };
+    t = { closes: [], seed: [], ema: null, firstClose: null, bars: 0, cooldown: 0, pendingCooldown: COOLDOWN_BARS, peakRatio: 0, tier1Done: false, lastExitHarvest: false, wasHeld: false, heldBefore: false };
     tracks.set(symbol, t);
   }
   return t;
@@ -156,13 +160,14 @@ function enters(t: Track): boolean {
 }
 
 /** Why a held position exits on this close: 'harvest', 'disaster', or null. The peak ratio is folded in first. */
-function exitKind(state: BarsState, symbol: string, t: Track, held: { qty: bigint; cost: bigint }): 'harvest' | 'disaster' | null {
+function exitKind(state: BarsState, symbol: string, t: Track, held: { qty: bigint; cost: bigint }): 'tier1' | 'harvest' | 'disaster' | null {
   const value = state.value(symbol, held.qty);
   const ratio = held.cost === 0n ? 0 : Number(value) / Number(held.cost);
   if (ratio > t.peakRatio) t.peakRatio = ratio;
   if (value * 100n <= held.cost * BigInt(100 - HARD_STOP * 100)) return 'disaster';
   const close = state.close(symbol);
   if (close !== null && t.ema !== null && Number(close) <= t.ema * (1 - BREAK_BAND)) return 'disaster';
+  if (!t.tier1Done && ratio >= 1 + TIER1_ARM) return 'tier1';
   if (t.peakRatio >= 1 + HARVEST_ARM && ratio <= t.peakRatio - HARVEST_TRAIL) return 'harvest';
   return null;
 }
@@ -187,6 +192,7 @@ await runBars({
           t.wasHeld = false;
           t.cooldown = t.pendingCooldown;
           t.peakRatio = 0;
+          t.tier1Done = false;
         }
         if (state.positions.size >= caps.max_open_positions) continue;
         if (!enters(t)) continue;
@@ -199,7 +205,13 @@ await runBars({
         t.wasHeld = true;
         t.heldBefore = true;
         const kind = exitKind(state, symbol, t, held);
-        if (kind !== null) {
+        if (kind === 'tier1') {
+          const part = (held.qty * 2n) / 5n;
+          if (part > 0n && state.value(symbol, part) >= minNotional) {
+            orders.push({ side: 'sell', symbol, qty: part, max_slippage_bps: MAX_SLIPPAGE_BPS });
+            t.tier1Done = true;
+          }
+        } else if (kind !== null) {
           orders.push({ side: 'sell', symbol, qty: held.qty, max_slippage_bps: MAX_SLIPPAGE_BPS });
           t.lastExitHarvest = kind === 'harvest';
           t.pendingCooldown = kind === 'harvest' ? COOLDOWN_HARVEST : COOLDOWN_BARS;
